@@ -9,14 +9,19 @@ import {
 import type { Candle, Trade } from "./types";
 
 interface Props {
+  symbol: string;
   candles: Candle[];
   trades: Trade[];
 }
 
-export function ChartPanel({ candles, trades }: Props) {
+const ZOOM_IN_FACTOR = 0.7;
+const ZOOM_OUT_FACTOR = 1 / ZOOM_IN_FACTOR;
+
+export function ChartPanel({ symbol, candles, trades }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const fittedSymbolRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -73,8 +78,40 @@ export function ChartPanel({ candles, trades }: Props) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (candleSeriesRef.current as any).setMarkers?.(markers);
 
-    chartRef.current?.timeScale().fitContent();
-  }, [candles, trades]);
+    // Only reset the view the first time this symbol's data loads (or when
+    // switching to a different symbol) -- otherwise every live candle update
+    // (every few seconds while the bot runs) would snap any zoom/pan the user
+    // did back to fitContent(), which is exactly the "zoom keeps resetting"
+    // bug this guards against.
+    if (fittedSymbolRef.current !== symbol) {
+      fittedSymbolRef.current = symbol;
+      chartRef.current?.timeScale().fitContent();
+    }
+  }, [symbol, candles, trades]);
 
-  return <div ref={containerRef} className="chart-panel" />;
+  const zoom = (factor: number) => {
+    const timeScale = chartRef.current?.timeScale();
+    const range = timeScale?.getVisibleLogicalRange();
+    if (!timeScale || !range) return;
+    const center = (range.from + range.to) / 2;
+    const halfWidth = ((range.to - range.from) / 2) * factor;
+    timeScale.setVisibleLogicalRange({ from: center - halfWidth, to: center + halfWidth });
+  };
+
+  return (
+    <div className="chart-panel-wrap">
+      <div ref={containerRef} className="chart-panel" />
+      <div className="chart-zoom-controls">
+        <button type="button" aria-label="Zoom in" onClick={() => zoom(ZOOM_IN_FACTOR)}>
+          +
+        </button>
+        <button type="button" aria-label="Zoom out" onClick={() => zoom(ZOOM_OUT_FACTOR)}>
+          −
+        </button>
+        <button type="button" aria-label="Reset zoom" onClick={() => chartRef.current?.timeScale().fitContent()}>
+          ⤢
+        </button>
+      </div>
+    </div>
+  );
 }

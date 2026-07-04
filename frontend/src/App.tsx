@@ -139,7 +139,7 @@ export default function App() {
               ))}
             </select>
           </div>
-          <ChartPanel candles={candles} trades={chartTrades} />
+          <ChartPanel symbol={chartSymbol} candles={candles} trades={chartTrades} />
         </section>
         <aside className="side-panel">
           <ControlPanel

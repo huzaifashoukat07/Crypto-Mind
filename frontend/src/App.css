@@ -60,10 +60,48 @@
   padding: 4px 8px;
 }
 
+.chart-panel-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 480px;
+  display: flex;
+}
+
 .chart-panel {
   width: 100%;
   flex: 1;
   min-height: 480px;
+}
+
+.chart-zoom-controls {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.chart-zoom-controls button {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel-bg);
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.85;
+}
+
+.chart-zoom-controls button:hover {
+  opacity: 1;
+  background: var(--bg);
 }
 
 .side-panel {
