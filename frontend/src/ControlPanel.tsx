@@ -81,6 +81,9 @@ function SymbolsField({
 export function ControlPanel({ config, onChange, onStart, onStop, status, busy }: Props) {
   const [showLiveConfirm, setShowLiveConfirm] = useState(false);
   const [mlModels, setMlModels] = useState<MlModelInfo[]>([]);
+  const [notificationsConfigured, setNotificationsConfigured] = useState<boolean | null>(null);
+  const [testStatus, setTestStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
+  const [testError, setTestError] = useState<string | null>(null);
   const isRunning = status === "running" || status === "starting";
   const set = <K extends keyof BotConfig>(key: K, value: BotConfig[K]) =>
     onChange({ ...config, [key]: value });
@@ -88,7 +91,23 @@ export function ControlPanel({ config, onChange, onStart, onStop, status, busy }
 
   useEffect(() => {
     api.mlModels().then(setMlModels).catch(() => setMlModels([]));
+    api
+      .notificationsStatus()
+      .then((r) => setNotificationsConfigured(r.configured))
+      .catch(() => setNotificationsConfigured(false));
   }, []);
+
+  const handleTestNotification = async () => {
+    setTestStatus("sending");
+    setTestError(null);
+    try {
+      await api.testNotification();
+      setTestStatus("sent");
+    } catch (err) {
+      setTestStatus("error");
+      setTestError(err instanceof Error ? err.message : String(err));
+    }
+  };
 
   const trainedSymbolsForTimeframe = mlModels
     .filter((m) => m.timeframe === config.timeframe && config.symbols.includes(m.symbol))
@@ -203,6 +222,40 @@ export function ControlPanel({ config, onChange, onStart, onStop, status, busy }
                 ` No model for ${untrainedSymbols.join(", ")} — those symbols will trade on the base strategy alone until you train one (see README: backend/ml/train.py).`}
             </p>
           </>
+        )}
+      </fieldset>
+
+      <fieldset className="field-group">
+        <legend>Notifications</legend>
+        <label className="checkbox-field">
+          <input
+            type="checkbox"
+            checked={config.notify_on_trade}
+            disabled={isRunning}
+            onChange={(e) => set("notify_on_trade", e.target.checked)}
+          />
+          <span>Send a Telegram message whenever a position opens or closes</span>
+        </label>
+        <p className="hint-text">
+          {notificationsConfigured === null
+            ? "Checking server configuration..."
+            : notificationsConfigured
+              ? "Telegram is configured on the server."
+              : "Telegram is not configured on the server (set TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID in backend/.env — see README)."}
+        </p>
+        <button
+          type="button"
+          className="btn"
+          onClick={handleTestNotification}
+          disabled={!notificationsConfigured || testStatus === "sending"}
+        >
+          {testStatus === "sending" ? "Sending…" : "Send test message"}
+        </button>
+        {testStatus === "sent" && <span className="hint-text" style={{ marginLeft: 8 }}>Sent — check Telegram.</span>}
+        {testStatus === "error" && (
+          <span className="hint-text" style={{ marginLeft: 8, color: "var(--danger)" }}>
+            {testError}
+          </span>
         )}
       </fieldset>
 

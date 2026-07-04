@@ -78,6 +78,23 @@ for a symbol you haven't trained a model for doesn't block trading — the bot
 logs a warning once and falls back to the base strategy signal alone for that
 symbol.
 
+## Telegram trade notifications
+
+Get a message whenever the bot opens or closes a position:
+
+1. Message [@BotFather](https://t.me/BotFather) on Telegram, send `/newbot`, follow the prompts — it gives you a bot token immediately.
+2. Send any message to your new bot, then open in a browser:
+   `https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates`
+   Find `"chat":{"id": ...}` in the response — that number is your chat ID.
+3. Set both in `backend/.env`:
+   ```
+   TELEGRAM_BOT_TOKEN=<your token>
+   TELEGRAM_CHAT_ID=<your chat id>
+   ```
+4. Restart the backend. In the UI, under **Notifications**, click **Send test message** to confirm it works before relying on it.
+
+Each buy/sell sends a message with the symbol, quantity, price, reason for the trade, and (on exits) the realized PnL. Toggle **"Send a Telegram message whenever a position opens or closes"** off per-bot if you don't want it for a given run. A failed or slow Telegram delivery never blocks or delays trading — it's fire-and-forget.
+
 ## Safety rails
 
 - **Mode gating**: `mode=live` requires both `ALLOW_LIVE_TRADING=true` in the
@@ -147,8 +164,9 @@ pytest
 Unit tests cover the strategy's indicator math and signal logic
 (`tests/test_strategy.py`), the paper broker's balance/PnL bookkeeping
 (`tests/test_paper_broker.py`), the ML feature engineering
-(`tests/test_features.py`), and the trained-model loading/caching
-(`tests/test_ml_filter.py`).
+(`tests/test_features.py`), the trained-model loading/caching
+(`tests/test_ml_filter.py`), and the Telegram notifier
+(`tests/test_notifier.py`).
 
 ## API surface
 
@@ -159,6 +177,8 @@ Unit tests cover the strategy's indicator math and signal logic
 | POST | `/api/bot/{id}/stop` | Stop a running bot |
 | GET | `/api/bot/{id}` | Get a bot's current status/trades/PnL |
 | GET | `/api/bots` | List all bot instances |
+| GET | `/api/notifications/status` | Whether Telegram is configured on the server |
+| POST | `/api/notifications/test` | Send a test Telegram message |
 | GET | `/api/ml/models` | List symbol/timeframe pairs with a trained ML filter model |
 | WS | `/ws` | Live stream of candle/trade/status/log events |
 

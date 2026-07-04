@@ -8,6 +8,7 @@ import pandas as pd
 
 from .exchange import ExchangeClient, ExchangeError
 from .ml_filter import MlFilter
+from .notifier import send_telegram_message
 from .paper_broker import PaperBroker, PositionState
 from .schemas import BotConfig, BotStatus, OrderSide, Position, Trade, TradingMode, WsEvent
 from .strategy import MaCrossoverRsiStrategy, StrategyParams
@@ -95,6 +96,7 @@ class BotEngine:
         self.daily_pnl = 0.0
         self._daily_pnl_day = datetime.now(timezone.utc).date()
         self._ml_warned: set[str] = set()
+        self._background_tasks: set[asyncio.Task] = set()
 
         self._task: Optional[asyncio.Task] = None
         self._stop_event = asyncio.Event()
@@ -290,6 +292,9 @@ class BotEngine:
         self._emit_event("trade", trade.model_dump())
         self._emit_log(f"BUY {qty:.6f} {symbol} @ {price:.2f} — {reason}")
         self._emit_status()
+        self._notify(
+            f"BUY {qty:.6f} {symbol} @ {price:.2f}\nReason: {reason}\nMode: {self.config.mode.value}"
+        )
 
     async def _exit(self, symbol: str, reason: str):
         price = self.last_price.get(symbol)
@@ -311,6 +316,9 @@ class BotEngine:
         self._emit_event("trade", trade.model_dump())
         self._emit_log(f"SELL {qty:.6f} {symbol} @ {price:.2f} — {reason} (PnL {pnl_delta:+.2f})")
         self._emit_status()
+        self._notify(
+            f"SELL {qty:.6f} {symbol} @ {price:.2f}\nReason: {reason}\nPnL: {pnl_delta:+.2f}\nMode: {self.config.mode.value}"
+        )
 
     # ---- status / events --------------------------------------------------
 
@@ -362,3 +370,13 @@ class BotEngine:
 
     def _emit_event(self, type_: str, data: dict):
         self.on_event(WsEvent(type=type_, bot_id=self.id, data=data))
+
+    def _notify(self, message: str):
+        if not self.config.notify_on_trade:
+            return
+        # Fire-and-forget: a slow/unreachable Telegram API must not stall the
+        # trading loop. Keep a reference to the task (asyncio only holds a
+        # weak reference internally) so it isn't garbage-collected mid-flight.
+        task = asyncio.create_task(send_telegram_message(message))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)

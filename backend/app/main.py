@@ -7,6 +7,8 @@ from .bot_manager import bot_manager
 from .config import settings
 from .exchange import ExchangeClient
 from .ml_filter import list_available_models
+from .notifier import is_configured as notifications_configured
+from .notifier import send_telegram_message
 from .schemas import BotStatus, StartBotRequest, TradingMode
 from .ws_manager import ws_manager
 
@@ -80,6 +82,24 @@ async def list_bots():
 @app.get("/api/ml/models")
 async def get_ml_models():
     return list_available_models()
+
+
+@app.get("/api/notifications/status")
+async def get_notifications_status():
+    return {"configured": notifications_configured()}
+
+
+@app.post("/api/notifications/test")
+async def test_notification():
+    if not notifications_configured():
+        raise HTTPException(
+            status_code=400,
+            detail="TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID are not configured on the server.",
+        )
+    ok = await send_telegram_message("Crypto-Mind: test notification. If you can read this, notifications are working.")
+    if not ok:
+        raise HTTPException(status_code=502, detail="Failed to send via Telegram — check the bot token/chat ID and server logs.")
+    return {"sent": True}
 
 
 @app.websocket("/ws")

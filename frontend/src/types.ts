@@ -19,6 +19,7 @@ export interface BotConfig {
   poll_interval_sec: number;
   use_ml_filter: boolean;
   ml_confidence_threshold: number;
+  notify_on_trade: boolean;
   live_confirmation?: "I_UNDERSTAND_THE_RISK" | null;
 }
 
@@ -96,5 +97,6 @@ export const DEFAULT_CONFIG: BotConfig = {
   poll_interval_sec: 5,
   use_ml_filter: false,
   ml_confidence_threshold: 0.55,
+  notify_on_trade: true,
   live_confirmation: null,
 };

@@ -33,4 +33,10 @@ export const api = {
     fetch(`${API_BASE}/api/bot/${botId}`).then((r) => json<BotStatus>(r)),
 
   mlModels: () => fetch(`${API_BASE}/api/ml/models`).then((r) => json<MlModelInfo[]>(r)),
+
+  notificationsStatus: () =>
+    fetch(`${API_BASE}/api/notifications/status`).then((r) => json<{ configured: boolean }>(r)),
+
+  testNotification: () =>
+    fetch(`${API_BASE}/api/notifications/test`, { method: "POST" }).then((r) => json<{ sent: boolean }>(r)),
 };

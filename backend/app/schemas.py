@@ -53,6 +53,11 @@ class BotConfig(BaseModel):
     use_ml_filter: bool = Field(default=False, description="require a trained ML classifier to also confirm buy signals")
     ml_confidence_threshold: float = Field(default=0.55, ge=0.5, le=0.99)
 
+    # Telegram trade notifications (see backend/app/notifier.py). Requires
+    # TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID configured on the server; silently
+    # has no effect otherwise.
+    notify_on_trade: bool = Field(default=True, description="send a Telegram message whenever a position is opened or closed")
+
     # Required to actually arm live trading; ignored for paper/testnet
     live_confirmation: Optional[Literal["I_UNDERSTAND_THE_RISK"]] = None
 
