@@ -3,6 +3,9 @@ backend/.venv/
 __pycache__/
 *.pyc
 
+# Local-only manual test scaffolding (not part of the shipped app)
+backend/_manual_test_*.py
+
 # Env files with secrets
 .env
 backend/.env
