@@ -46,6 +46,13 @@ class BotConfig(BaseModel):
 
     poll_interval_sec: float = Field(default=5.0, ge=1, le=300)
 
+    # Optional ML confirmation filter (see backend/ml/train.py). Requires a
+    # model already trained for the symbol/timeframe; silently has no effect
+    # otherwise (the bot logs that it found no model and falls back to the
+    # base strategy signal alone).
+    use_ml_filter: bool = Field(default=False, description="require a trained ML classifier to also confirm buy signals")
+    ml_confidence_threshold: float = Field(default=0.55, ge=0.5, le=0.99)
+
     # Required to actually arm live trading; ignored for paper/testnet
     live_confirmation: Optional[Literal["I_UNDERSTAND_THE_RISK"]] = None
 

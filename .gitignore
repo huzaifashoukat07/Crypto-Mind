@@ -15,5 +15,9 @@ frontend/.env
 frontend/node_modules/
 frontend/dist/
 
+# Trained ML filter models are generated locally from your own historical
+# data (see backend/ml/train.py) -- not shipped or committed.
+backend/ml/models/*.joblib
+
 # Editor/OS
 .DS_Store

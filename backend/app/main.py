@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .bot_manager import bot_manager
 from .config import settings
 from .exchange import ExchangeClient
+from .ml_filter import list_available_models
 from .schemas import BotStatus, StartBotRequest, TradingMode
 from .ws_manager import ws_manager
 
@@ -74,6 +75,11 @@ async def get_bot(bot_id: str):
 @app.get("/api/bots", response_model=list[BotStatus])
 async def list_bots():
     return bot_manager.list_status()
+
+
+@app.get("/api/ml/models")
+async def get_ml_models():
+    return list_available_models()
 
 
 @app.websocket("/ws")

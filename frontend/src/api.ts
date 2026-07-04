@@ -1,4 +1,4 @@
-import type { BotConfig, BotStatus, Candle } from "./types";
+import type { BotConfig, BotStatus, Candle, MlModelInfo } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000";
 export const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws";
@@ -31,4 +31,6 @@ export const api = {
 
   getBot: (botId: string) =>
     fetch(`${API_BASE}/api/bot/${botId}`).then((r) => json<BotStatus>(r)),
+
+  mlModels: () => fetch(`${API_BASE}/api/ml/models`).then((r) => json<MlModelInfo[]>(r)),
 };

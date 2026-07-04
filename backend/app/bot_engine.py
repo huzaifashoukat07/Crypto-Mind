@@ -7,6 +7,7 @@ from typing import Callable, Optional
 import pandas as pd
 
 from .exchange import ExchangeClient, ExchangeError
+from .ml_filter import MlFilter
 from .paper_broker import PaperBroker, PositionState
 from .schemas import BotConfig, BotStatus, OrderSide, Position, Trade, TradingMode, WsEvent
 from .strategy import MaCrossoverRsiStrategy, StrategyParams
@@ -93,6 +94,7 @@ class BotEngine:
         self.last_error: Optional[str] = None
         self.daily_pnl = 0.0
         self._daily_pnl_day = datetime.now(timezone.utc).date()
+        self._ml_warned: set[str] = set()
 
         self._task: Optional[asyncio.Task] = None
         self._stop_event = asyncio.Event()
@@ -182,14 +184,34 @@ class BotEngine:
             if symbol in self._open_symbols() or symbol in exited_this_tick:
                 continue
             output = self.strategy.evaluate(self.candles[symbol], in_position=False)
-            if output.signal == "buy":
-                candidates.append((symbol, output))
+            if output.signal != "buy":
+                continue
+            if self.config.use_ml_filter and not self._ml_confirms(symbol, output):
+                continue
+            candidates.append((symbol, output))
 
         # Strongest signal first: lower RSI = more oversold = higher-conviction entry.
         candidates.sort(key=lambda item: item[1].rsi_value if item[1].rsi_value is not None else 100.0)
 
         for symbol, output in candidates[:slots_available]:
             await self._enter(symbol, output.reason)
+
+    def _ml_confirms(self, symbol: str, output) -> bool:
+        ml = MlFilter.load(symbol, self.config.timeframe)
+        if ml is None:
+            if symbol not in self._ml_warned:
+                self._ml_warned.add(symbol)
+                self._emit_log(
+                    f"ML filter enabled but no trained model found for {symbol} ({self.config.timeframe}); "
+                    "trading on the base strategy signal alone for this symbol. Train one with "
+                    "`python -m ml.train --symbol ...` in backend/."
+                )
+            return True
+        proba = ml.predict_up_probability(self.candles[symbol])
+        if proba is None or proba < self.config.ml_confidence_threshold:
+            return False
+        output.reason = f"{output.reason}; ML confirms (p_up={proba:.2f})"
+        return True
 
     async def _check_risk_exit(self, symbol: str) -> bool:
         price = self.last_price.get(symbol)

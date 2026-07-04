@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import type { BotConfig, BotRunStatus, TradingMode } from "./types";
+import { api } from "./api";
+import type { BotConfig, BotRunStatus, MlModelInfo, TradingMode } from "./types";
 
 interface Props {
   config: BotConfig;
@@ -79,10 +80,20 @@ function SymbolsField({
 
 export function ControlPanel({ config, onChange, onStart, onStop, status, busy }: Props) {
   const [showLiveConfirm, setShowLiveConfirm] = useState(false);
+  const [mlModels, setMlModels] = useState<MlModelInfo[]>([]);
   const isRunning = status === "running" || status === "starting";
   const set = <K extends keyof BotConfig>(key: K, value: BotConfig[K]) =>
     onChange({ ...config, [key]: value });
   const isScannerMode = config.symbols.length > 1;
+
+  useEffect(() => {
+    api.mlModels().then(setMlModels).catch(() => setMlModels([]));
+  }, []);
+
+  const trainedSymbolsForTimeframe = mlModels
+    .filter((m) => m.timeframe === config.timeframe && config.symbols.includes(m.symbol))
+    .map((m) => m.symbol);
+  const untrainedSymbols = config.symbols.filter((s) => !trainedSymbolsForTimeframe.includes(s));
 
   const handleStartClick = () => {
     if (config.mode === "live" && config.live_confirmation !== "I_UNDERSTAND_THE_RISK") {
@@ -161,6 +172,38 @@ export function ControlPanel({ config, onChange, onStart, onStop, status, busy }
           <NumberField label="Take profit %" value={config.take_profit_pct} step={0.1} onChange={(v) => set("take_profit_pct", v)} disabled={isRunning} />
           <NumberField label="Max daily loss % (kill switch)" value={config.max_daily_loss_pct} step={0.5} onChange={(v) => set("max_daily_loss_pct", v)} disabled={isRunning} />
         </div>
+      </fieldset>
+
+      <fieldset className="field-group" disabled={isRunning}>
+        <legend>ML confirmation filter (optional)</legend>
+        <label className="checkbox-field">
+          <input
+            type="checkbox"
+            checked={config.use_ml_filter}
+            onChange={(e) => set("use_ml_filter", e.target.checked)}
+          />
+          <span>Require a trained ML model to also confirm buy signals</span>
+        </label>
+        {config.use_ml_filter && (
+          <>
+            <div className="field-row" style={{ marginTop: 8 }}>
+              <NumberField
+                label="Confidence threshold"
+                value={config.ml_confidence_threshold}
+                step={0.01}
+                onChange={(v) => set("ml_confidence_threshold", v)}
+                disabled={isRunning}
+              />
+            </div>
+            <p className="hint-text">
+              {trainedSymbolsForTimeframe.length > 0
+                ? `Trained model found for: ${trainedSymbolsForTimeframe.join(", ")} (${config.timeframe}).`
+                : "No trained models found for this timeframe yet."}
+              {untrainedSymbols.length > 0 &&
+                ` No model for ${untrainedSymbols.join(", ")} — those symbols will trade on the base strategy alone until you train one (see README: backend/ml/train.py).`}
+            </p>
+          </>
+        )}
       </fieldset>
 
       <div className="start-row">

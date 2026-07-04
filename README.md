@@ -44,6 +44,40 @@ before trusting it with money. `MaCrossoverRsiStrategy` is a small, self
 contained class — swap in your own by following the same interface
 (`evaluate(candles, in_position) -> StrategyOutput`).
 
+## Optional ML confirmation filter
+
+You can train a gradient-boosting classifier (`backend/ml/train.py`) to act as
+a second-opinion gate on top of the base strategy: it predicts the probability
+of an upward move from technical features (RSI, MACD, Bollinger %B/width,
+volume ratio, momentum, volatility, MA gap), and a buy signal only proceeds if
+that probability clears a confidence threshold.
+
+**This is opt-in and off by default, and it does not guarantee better
+results** — there is no model that reliably predicts crypto prices, and the
+training script exists specifically so you can check that honestly before
+trusting it:
+
+```bash
+cd backend
+source .venv/bin/activate
+python -m ml.train --symbol BTC/USDT --timeframe 5m --days 180
+```
+
+This fetches real historical candles, trains the model, and — the important
+part — backtests the actual trading strategy on a held-out chronological
+slice **both with and without the filter**, printing a side-by-side
+comparison (total return, trade count, win rate). Only turn on **"Use ML
+confirmation filter"** in the UI if the "with filter" numbers are actually
+better than baseline on your own data; if they're not, the filter isn't
+helping and you should leave it off. Try different `--horizon` /
+`--up-threshold` / `--days` values — a single run isn't the final word.
+
+Models are saved to `backend/ml/models/<SYMBOL>_<TIMEFRAME>.joblib` (one per
+symbol+timeframe you train) and picked up automatically. Enabling the filter
+for a symbol you haven't trained a model for doesn't block trading — the bot
+logs a warning once and falls back to the base strategy signal alone for that
+symbol.
+
 ## Safety rails
 
 - **Mode gating**: `mode=live` requires both `ALLOW_LIVE_TRADING=true` in the
@@ -111,8 +145,10 @@ pytest
 ```
 
 Unit tests cover the strategy's indicator math and signal logic
-(`tests/test_strategy.py`) and the paper broker's balance/PnL bookkeeping
-(`tests/test_paper_broker.py`).
+(`tests/test_strategy.py`), the paper broker's balance/PnL bookkeeping
+(`tests/test_paper_broker.py`), the ML feature engineering
+(`tests/test_features.py`), and the trained-model loading/caching
+(`tests/test_ml_filter.py`).
 
 ## API surface
 
@@ -123,6 +159,7 @@ Unit tests cover the strategy's indicator math and signal logic
 | POST | `/api/bot/{id}/stop` | Stop a running bot |
 | GET | `/api/bot/{id}` | Get a bot's current status/trades/PnL |
 | GET | `/api/bots` | List all bot instances |
+| GET | `/api/ml/models` | List symbol/timeframe pairs with a trained ML filter model |
 | WS | `/ws` | Live stream of candle/trade/status/log events |
 
 ## Known limitations
