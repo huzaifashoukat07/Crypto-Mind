@@ -63,6 +63,13 @@ class LiveLedger:
 
 
 class BotEngine:
+    # A single tick failing (e.g. a transient network blip against a
+    # sometimes-flaky endpoint like Binance testnet) shouldn't kill an
+    # otherwise-healthy bot outright -- it's retried on the next poll
+    # interval instead. Only this many *consecutive* failures in a row is
+    # treated as something persistently broken worth actually stopping for.
+    MAX_CONSECUTIVE_TICK_FAILURES = 5
+
     def __init__(self, bot_id: str, config: BotConfig, on_event: EventCallback):
         self.id = bot_id
         self.config = config
@@ -97,6 +104,7 @@ class BotEngine:
         self._daily_pnl_day = datetime.now(timezone.utc).date()
         self._ml_warned: set[str] = set()
         self._background_tasks: set[asyncio.Task] = set()
+        self._consecutive_failures = 0
 
         self._task: Optional[asyncio.Task] = None
         self._stop_event = asyncio.Event()
@@ -136,18 +144,34 @@ class BotEngine:
         while not self._stop_event.is_set():
             try:
                 await self._tick()
+                self._consecutive_failures = 0
             except ExchangeError as exc:
-                self._fail(str(exc))
-                return
+                if not self._handle_tick_failure(str(exc)):
+                    return
             except Exception as exc:  # noqa: BLE001
                 logger.exception("bot tick failed")
-                self._fail(f"unexpected error: {exc}")
-                return
+                if not self._handle_tick_failure(f"unexpected error: {exc}"):
+                    return
 
             try:
                 await asyncio.wait_for(self._stop_event.wait(), timeout=self.config.poll_interval_sec)
             except asyncio.TimeoutError:
                 pass
+
+    def _handle_tick_failure(self, message: str) -> bool:
+        """Returns True if the bot should keep running (the failure is
+        retried on the next poll interval), False if it should stop (too
+        many in a row -- treated as persistently broken, not a blip)."""
+        self._consecutive_failures += 1
+        if self._consecutive_failures >= self.MAX_CONSECUTIVE_TICK_FAILURES:
+            self._fail(f"{message} (failed {self._consecutive_failures} times in a row, giving up)")
+            self._notify(f"Bot stopped after {self._consecutive_failures} consecutive errors.\nLast error: {message}")
+            return False
+        self._emit_log(
+            f"WARNING: tick failed ({self._consecutive_failures}/{self.MAX_CONSECUTIVE_TICK_FAILURES}), "
+            f"will retry next poll: {message}"
+        )
+        return True
 
     # ---- core tick -------------------------------------------------------
 
