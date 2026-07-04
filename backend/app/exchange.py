@@ -29,6 +29,12 @@ class ExchangeClient:
             # need it. Paper mode must stay pure public/unauthenticated data.
             params["apiKey"] = settings.binance_api_key or None
             params["secret"] = settings.binance_api_secret or None
+            # Binance rejects signed requests if the client clock is more than
+            # ~1s ahead of its server time (error -1021), which is common on
+            # machines with clock drift (esp. Windows). This has ccxt measure
+            # the offset once and apply it to every signed request's
+            # timestamp, instead of requiring the OS clock to be exact.
+            params["options"] = {"adjustForTimeDifference": True, "recvWindow": 10000}
         self._exchange = ccxt.binance(params)
         if mode == TradingMode.testnet:
             self._exchange.set_sandbox_mode(True)
