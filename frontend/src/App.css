@@ -17,6 +17,25 @@
   font-size: 14px;
 }
 
+.api-token-field {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.api-token-field input {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  width: 180px;
+}
+
 .app-body {
   flex: 1;
   display: grid;

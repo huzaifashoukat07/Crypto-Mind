@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import "./App.css";
+import { ApiTokenField } from "./ApiTokenField";
 import { ChartPanel } from "./ChartPanel";
 import { ControlPanel } from "./ControlPanel";
 import { LogPanel } from "./LogPanel";
@@ -119,6 +120,7 @@ export default function App() {
       <header className="app-header">
         <h1>Crypto-Mind</h1>
         <span className="subtitle">Chart-driven crypto trading bot</span>
+        <ApiTokenField />
       </header>
 
       {errorBanner && (

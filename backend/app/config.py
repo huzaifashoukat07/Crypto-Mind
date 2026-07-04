@@ -14,6 +14,12 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
 
+    # If set, every API request (except /api/health) and the WebSocket must
+    # present this token, since the API has no other access control. Leave
+    # blank only for strictly localhost-only use -- required for anything
+    # reachable from the internet (see README: Deploying for 24/7 uptime).
+    api_auth_token: str = ""
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

@@ -95,6 +95,86 @@ Get a message whenever the bot opens or closes a position:
 
 Each buy/sell sends a message with the symbol, quantity, price, reason for the trade, and (on exits) the realized PnL. Toggle **"Send a Telegram message whenever a position opens or closes"** off per-bot if you don't want it for a given run. A failed or slow Telegram delivery never blocks or delays trading — it's fire-and-forget.
 
+## API authentication
+
+The API has no built-in user accounts, so if the backend is reachable from
+anywhere other than your own machine (e.g. deployed on a VPS — see
+"Deploying for 24/7 uptime" below), set an auth token:
+
+```
+API_AUTH_TOKEN=<a long random string>
+```
+
+Every REST endpoint except `/api/health` then requires
+`Authorization: Bearer <token>`, and the WebSocket requires `?token=<token>`
+in its URL. In the UI, paste the same value into the **API token** field in
+the top-right of the header and click **Save** (it's stored in
+`localStorage`, never baked into the build). Leave `API_AUTH_TOKEN` unset
+only for strictly local/`localhost`-only use — the frontend then works with
+no token needed.
+
+## Deploying for 24/7 uptime
+
+The bot only trades while the backend process is running, so if you want it
+running around the clock without your own machine staying on, it needs to
+live somewhere that's always on: a small cloud VM. Oracle Cloud's **Always
+Free** tier gives you a genuinely free-forever VM that's enough for this.
+
+1. **Create the VM**: sign up at oracle.com/cloud/free, create a compute
+   instance (Ampere A1 shape, Ubuntu, under the Always Free eligible
+   options), and note its public IP.
+2. **Open the port**: in the instance's attached Security List (or Network
+   Security Group), add an ingress rule allowing TCP on whatever port you'll
+   run the backend on (e.g. 8000), and do the same in the VM's own firewall
+   (`sudo ufw allow 8000` on Ubuntu, or `sudo firewall-cmd` on Oracle Linux).
+3. **SSH in, install dependencies, clone the repo**:
+   ```bash
+   sudo apt update && sudo apt install -y python3-venv git
+   git clone <your repo url>
+   cd crypto-mind/backend
+   python3 -m venv .venv && source .venv/bin/activate
+   pip install -r requirements.txt
+   cp .env.example .env   # fill in API_AUTH_TOKEN at minimum, plus keys as needed
+   ```
+4. **Run it as a systemd service** so it survives reboots and crashes. Create
+   `/etc/systemd/system/crypto-mind-backend.service`:
+   ```ini
+   [Unit]
+   Description=Crypto-Mind trading bot backend
+   After=network.target
+
+   [Service]
+   User=ubuntu
+   WorkingDirectory=/home/ubuntu/crypto-mind/backend
+   ExecStart=/home/ubuntu/crypto-mind/backend/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+   Restart=always
+   RestartSec=5
+
+   [Install]
+   WantedBy=multi-user.target
+   ```
+   Then:
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now crypto-mind-backend
+   sudo systemctl status crypto-mind-backend   # confirm it's running
+   ```
+5. **Set `CORS_ORIGINS`** in the VM's `.env` to wherever you'll load the
+   frontend from (e.g. `http://<vm-ip>:5173`, or your own domain if you put
+   one in front of it).
+6. **The frontend** can either run on the same VM (same systemd-service
+   pattern, `npm run build` + serve `dist/` with any static file server) or
+   just stay on your laptop with `VITE_API_BASE` pointed at
+   `http://<vm-ip>:8000` — you only need the *backend* running 24/7, since
+   that's where the bot loop lives.
+7. Set the **API token** described above — do not skip this once the VM has
+   a public IP.
+
+For anything beyond casual personal use, also put a reverse proxy (Caddy or
+nginx) in front with a real TLS certificate instead of talking to uvicorn
+directly over plain HTTP — Caddy in particular gets you automatic HTTPS with
+a two-line config. That's a good next step but not covered in depth here.
+
 ## Safety rails
 
 - **Mode gating**: `mode=live` requires both `ALLOW_LIVE_TRADING=true` in the
@@ -165,8 +245,9 @@ Unit tests cover the strategy's indicator math and signal logic
 (`tests/test_strategy.py`), the paper broker's balance/PnL bookkeeping
 (`tests/test_paper_broker.py`), the ML feature engineering
 (`tests/test_features.py`), the trained-model loading/caching
-(`tests/test_ml_filter.py`), and the Telegram notifier
-(`tests/test_notifier.py`).
+(`tests/test_ml_filter.py`), the Telegram notifier
+(`tests/test_notifier.py`), and the API token auth checks
+(`tests/test_auth.py`).
 
 ## API surface
 

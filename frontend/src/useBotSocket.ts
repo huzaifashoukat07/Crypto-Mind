@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { WS_URL } from "./api";
+import { getWsUrl } from "./api";
 import type { WsEvent } from "./types";
 
 export function useBotSocket(onEvent: (event: WsEvent) => void) {
@@ -12,7 +12,7 @@ export function useBotSocket(onEvent: (event: WsEvent) => void) {
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
     const connect = () => {
-      socket = new WebSocket(WS_URL);
+      socket = new WebSocket(getWsUrl());
       socket.onmessage = (msg) => {
         try {
           const event: WsEvent = JSON.parse(msg.data);
