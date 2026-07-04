@@ -21,11 +21,14 @@ class ExchangeClient:
 
     def __init__(self, mode: TradingMode):
         self.mode = mode
-        params: dict = {
-            "apiKey": settings.binance_api_key or None,
-            "secret": settings.binance_api_secret or None,
-            "enableRateLimit": True,
-        }
+        params: dict = {"enableRateLimit": True}
+        if mode != TradingMode.paper:
+            # Only attach credentials outside paper mode: ccxt authenticates
+            # extra endpoints (e.g. fetch_currencies during load_markets)
+            # whenever apiKey is present, even for calls that don't strictly
+            # need it. Paper mode must stay pure public/unauthenticated data.
+            params["apiKey"] = settings.binance_api_key or None
+            params["secret"] = settings.binance_api_secret or None
         self._exchange = ccxt.binance(params)
         if mode == TradingMode.testnet:
             self._exchange.set_sandbox_mode(True)
