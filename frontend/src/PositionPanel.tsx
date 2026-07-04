@@ -15,6 +15,7 @@ export function PositionPanel({ status }: { status: BotStatus | null }) {
   }
 
   const pnlClass = (v: number) => (v > 0 ? "pnl-pos" : v < 0 ? "pnl-neg" : "");
+  const totalUnrealized = status.positions.reduce((sum, p) => sum + p.unrealized_pnl, 0);
 
   return (
     <div className="position-panel">
@@ -25,16 +26,8 @@ export function PositionPanel({ status }: { status: BotStatus | null }) {
           <span className="stat-value">{fmt(status.balance_quote)}</span>
         </div>
         <div className="stat">
-          <span className="stat-label">Base position</span>
-          <span className="stat-value">{fmt(status.balance_base, 6)}</span>
-        </div>
-        <div className="stat">
-          <span className="stat-label">Entry price</span>
-          <span className="stat-value">{status.entry_price ? fmt(status.entry_price) : "—"}</span>
-        </div>
-        <div className="stat">
           <span className="stat-label">Unrealized PnL</span>
-          <span className={`stat-value ${pnlClass(status.unrealized_pnl)}`}>{fmt(status.unrealized_pnl)}</span>
+          <span className={`stat-value ${pnlClass(totalUnrealized)}`}>{fmt(totalUnrealized)}</span>
         </div>
         <div className="stat">
           <span className="stat-label">Realized PnL</span>
@@ -45,6 +38,34 @@ export function PositionPanel({ status }: { status: BotStatus | null }) {
           <span className={`stat-value ${pnlClass(status.daily_pnl)}`}>{fmt(status.daily_pnl)}</span>
         </div>
       </div>
+
+      {status.positions.length > 0 ? (
+        <table className="positions-table">
+          <thead>
+            <tr>
+              <th>Symbol</th>
+              <th>Qty</th>
+              <th>Entry</th>
+              <th>Unrealized</th>
+            </tr>
+          </thead>
+          <tbody>
+            {status.positions.map((p) => (
+              <tr key={p.symbol}>
+                <td>{p.symbol}</td>
+                <td>{fmt(p.quantity, 6)}</td>
+                <td>{fmt(p.entry_price)}</td>
+                <td className={pnlClass(p.unrealized_pnl)}>{fmt(p.unrealized_pnl)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <div className="log-empty" style={{ marginTop: 10 }}>
+          No open positions — waiting for a signal.
+        </div>
+      )}
+
       {status.last_error && <div className="error-banner">{status.last_error}</div>}
     </div>
   );

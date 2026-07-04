@@ -16,7 +16,14 @@ class OrderSide(str, Enum):
 
 
 class BotConfig(BaseModel):
-    symbol: str = Field(default="BTC/USDT", description="ccxt-style market symbol")
+    symbols: list[str] = Field(
+        default=["BTC/USDT"],
+        min_length=1,
+        max_length=10,
+        description="ccxt-style market symbols to watch. One symbol trades that pair only; "
+        "more than one puts the bot in scanner mode, where it evaluates every symbol each "
+        "tick and automatically enters whichever show the strongest signal.",
+    )
     timeframe: str = Field(default="5m", description="candle timeframe, e.g. 1m/5m/15m/1h")
     mode: TradingMode = TradingMode.paper
 
@@ -33,6 +40,9 @@ class BotConfig(BaseModel):
     stop_loss_pct: float = Field(default=2.0, gt=0, le=50)
     take_profit_pct: float = Field(default=4.0, gt=0, le=200)
     max_daily_loss_pct: float = Field(default=5.0, gt=0, le=100, description="kill switch: stop bot if daily loss exceeds this")
+    max_concurrent_positions: int = Field(
+        default=3, ge=1, le=10, description="cap on how many symbols can be held open at once in scanner mode"
+    )
 
     poll_interval_sec: float = Field(default=5.0, ge=1, le=300)
 
@@ -47,7 +57,20 @@ class BotConfig(BaseModel):
             raise ValueError(
                 "live mode requires live_confirmation == 'I_UNDERSTAND_THE_RISK'"
             )
+        quote_currencies = {s.strip().upper().split("/")[-1] for s in self.symbols}
+        if len(quote_currencies) > 1:
+            raise ValueError(
+                f"all watched symbols must share the same quote currency (got {sorted(quote_currencies)}), "
+                "since balance is tracked as a single shared pool"
+            )
         return self
+
+    @property
+    def normalized_symbols(self) -> list[str]:
+        seen: dict[str, None] = {}
+        for s in self.symbols:
+            seen.setdefault(s.strip().upper(), None)
+        return list(seen.keys())
 
 
 class Candle(BaseModel):
@@ -61,6 +84,7 @@ class Candle(BaseModel):
 
 class Trade(BaseModel):
     time: int
+    symbol: str
     side: OrderSide
     price: float
     quantity: float
@@ -68,15 +92,19 @@ class Trade(BaseModel):
     pnl: Optional[float] = None
 
 
+class Position(BaseModel):
+    symbol: str
+    quantity: float
+    entry_price: float
+    unrealized_pnl: float
+
+
 class BotStatus(BaseModel):
     id: str
     config: BotConfig
     status: Literal["starting", "running", "stopped", "error", "stopped_kill_switch"]
     balance_quote: float
-    balance_base: float
-    position_qty: float
-    entry_price: Optional[float]
-    unrealized_pnl: float
+    positions: list[Position]
     realized_pnl: float
     daily_pnl: float
     trades: list[Trade]

@@ -32,16 +32,37 @@
 }
 
 .chart-section {
-  min-height: 480px;
+  display: flex;
+  flex-direction: column;
+  min-height: 520px;
   background: var(--panel-bg);
   border: 1px solid var(--border);
   border-radius: 10px;
   overflow: hidden;
 }
 
+.chart-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.chart-toolbar select {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+}
+
 .chart-panel {
   width: 100%;
-  height: 100%;
+  flex: 1;
   min-height: 480px;
 }
 
@@ -84,6 +105,12 @@
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 6px 8px;
+}
+
+.hint-text {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: -4px 0 12px;
 }
 
 .field-group {
@@ -183,6 +210,27 @@
 
 .pnl-pos { color: var(--success); }
 .pnl-neg { color: var(--danger); }
+
+.positions-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 12px;
+  font-size: 13px;
+}
+
+.positions-table th {
+  text-align: left;
+  color: var(--text-muted);
+  font-weight: 500;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.positions-table td {
+  padding: 4px 6px;
+  font-variant-numeric: tabular-nums;
+  border-bottom: 1px solid var(--border);
+}
 
 .log-panel {
   flex: 1;

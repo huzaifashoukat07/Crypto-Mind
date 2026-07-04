@@ -1,9 +1,16 @@
 # Crypto-Mind
 
-A crypto trading bot with a web dashboard: pick a symbol, watch the live
-candlestick chart, click **Start Bot**, and it trades automatically using a
-moving-average crossover strategy filtered by RSI. Supports paper trading
-(simulated, zero risk), Binance testnet, and live trading with real funds.
+A crypto trading bot with a web dashboard: pick a symbol (or a watchlist of
+several), watch the live candlestick chart, click **Start Bot**, and it trades
+automatically using a moving-average crossover strategy filtered by RSI.
+Supports paper trading (simulated, zero risk), Binance testnet, and live
+trading with real funds.
+
+Give it more than one symbol and it runs in **scanner mode**: every tick it
+evaluates the whole watchlist and automatically enters whichever symbols show
+the strongest buy signal (most oversold RSI first), up to a configurable
+number of concurrent open positions — so you don't have to pick the coin
+yourself.
 
 > ⚠️ **This is not financial advice, and past/simulated performance is not a
 > guarantee of future results.** Trading carries real risk of financial loss.
@@ -120,7 +127,9 @@ Unit tests cover the strategy's indicator math and signal logic
 
 ## Known limitations
 
-- Single-symbol spot trading only (no futures/margin, no multi-leg strategies).
+- Spot trading only (no futures/margin, no multi-leg strategies).
+- All watchlist symbols must share the same quote currency (e.g. all
+  `*/USDT`) since the quote balance is a single shared pool across positions.
 - One strategy shipped (MA crossover + RSI filter); adding more requires
   writing a new class in `strategy.py` and wiring it into `BotConfig`.
 - `testnet`/`live` order fills are read directly from the exchange's order

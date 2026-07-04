@@ -6,23 +6,31 @@ TAKER_FEE_RATE = 0.001  # 0.1%, matches Binance's default spot taker fee
 
 
 @dataclass
+class PositionState:
+    quantity: float = 0.0
+    entry_price: float | None = None
+
+
+@dataclass
 class PaperBroker:
-    """Simulated single-symbol spot broker: fills market orders instantly at
-    the given reference price and tracks a quote-currency balance plus a
-    base-asset position. Used for mode=paper so the bot can be exercised
-    risk-free against real live prices."""
+    """Simulated multi-symbol spot broker: fills market orders instantly at
+    the given reference price and tracks a shared quote-currency balance plus
+    one base-asset position per symbol. Used for mode=paper so the bot can be
+    exercised risk-free against real live prices."""
 
     balance_quote: float
-    balance_base: float = 0.0
     realized_pnl: float = 0.0
-    _entry_price: float | None = field(default=None, init=False)
+    positions: dict[str, PositionState] = field(default_factory=dict)
 
-    @property
-    def entry_price(self) -> float | None:
-        return self._entry_price
+    def position(self, symbol: str) -> PositionState:
+        return self.positions.setdefault(symbol, PositionState())
 
-    def execute(self, side: OrderSide, price: float, quantity: float) -> float:
+    def open_symbols(self) -> list[str]:
+        return [s for s, p in self.positions.items() if p.quantity > 0]
+
+    def execute(self, symbol: str, side: OrderSide, price: float, quantity: float) -> float:
         """Returns the realized PnL delta from this fill (0 for entries)."""
+        pos = self.position(symbol)
         notional = price * quantity
         fee = notional * TAKER_FEE_RATE
         pnl_delta = 0.0
@@ -30,32 +38,31 @@ class PaperBroker:
         if side == OrderSide.buy:
             cost = notional + fee
             if cost > self.balance_quote + 1e-9:
-                raise ValueError("insufficient paper balance for this buy")
+                raise ValueError(f"insufficient paper balance for this buy on {symbol}")
             self.balance_quote -= cost
-            new_base = self.balance_base + quantity
-            if self._entry_price is None:
-                self._entry_price = price
+            new_qty = pos.quantity + quantity
+            if pos.entry_price is None:
+                pos.entry_price = price
             else:
-                self._entry_price = (
-                    (self._entry_price * self.balance_base) + (price * quantity)
-                ) / new_base
-            self.balance_base = new_base
+                pos.entry_price = ((pos.entry_price * pos.quantity) + (price * quantity)) / new_qty
+            pos.quantity = new_qty
         else:
-            if quantity > self.balance_base + 1e-9:
-                raise ValueError("insufficient paper position for this sell")
+            if quantity > pos.quantity + 1e-9:
+                raise ValueError(f"insufficient paper position for this sell on {symbol}")
             proceeds = notional - fee
-            if self._entry_price is not None:
-                pnl_delta = (price - self._entry_price) * quantity - fee
+            if pos.entry_price is not None:
+                pnl_delta = (price - pos.entry_price) * quantity - fee
             self.balance_quote += proceeds
-            self.balance_base -= quantity
+            pos.quantity -= quantity
             self.realized_pnl += pnl_delta
-            if self.balance_base <= 1e-9:
-                self.balance_base = 0.0
-                self._entry_price = None
+            if pos.quantity <= 1e-9:
+                pos.quantity = 0.0
+                pos.entry_price = None
 
         return pnl_delta
 
-    def unrealized_pnl(self, mark_price: float) -> float:
-        if self.balance_base <= 0 or self._entry_price is None:
+    def unrealized_pnl(self, symbol: str, mark_price: float) -> float:
+        pos = self.positions.get(symbol)
+        if not pos or pos.quantity <= 0 or pos.entry_price is None:
             return 0.0
-        return (mark_price - self._entry_price) * self.balance_base
+        return (mark_price - pos.entry_price) * pos.quantity

@@ -7,8 +7,8 @@ from typing import Callable, Optional
 import pandas as pd
 
 from .exchange import ExchangeClient, ExchangeError
-from .paper_broker import PaperBroker
-from .schemas import BotConfig, BotStatus, Candle, OrderSide, Trade, TradingMode, WsEvent
+from .paper_broker import PaperBroker, PositionState
+from .schemas import BotConfig, BotStatus, OrderSide, Position, Trade, TradingMode, WsEvent
 from .strategy import MaCrossoverRsiStrategy, StrategyParams
 
 logger = logging.getLogger("bot_engine")
@@ -17,41 +17,47 @@ EventCallback = Callable[[WsEvent], None]
 
 
 class LiveLedger:
-    """Tracks position/entry-price/realized-pnl bookkeeping for testnet/live
-    modes, where the exchange itself enforces balance constraints and fills
-    real orders -- this class just mirrors the resulting position so the bot
-    can reason about stop-loss/take-profit and PnL."""
+    """Tracks per-symbol position/entry-price/realized-pnl bookkeeping for
+    testnet/live modes, where the exchange itself enforces balance
+    constraints and fills real orders -- this class just mirrors the
+    resulting positions so the bot can reason about stop-loss/take-profit
+    and PnL."""
 
     def __init__(self):
-        self.balance_base = 0.0
-        self.entry_price: Optional[float] = None
+        self.positions: dict[str, PositionState] = {}
         self.realized_pnl = 0.0
 
-    def on_fill(self, side: OrderSide, price: float, quantity: float) -> float:
+    def position(self, symbol: str) -> PositionState:
+        return self.positions.setdefault(symbol, PositionState())
+
+    def open_symbols(self) -> list[str]:
+        return [s for s, p in self.positions.items() if p.quantity > 0]
+
+    def on_fill(self, symbol: str, side: OrderSide, price: float, quantity: float) -> float:
+        pos = self.position(symbol)
         pnl_delta = 0.0
         if side == OrderSide.buy:
-            new_base = self.balance_base + quantity
-            if self.entry_price is None:
-                self.entry_price = price
+            new_qty = pos.quantity + quantity
+            if pos.entry_price is None:
+                pos.entry_price = price
             else:
-                self.entry_price = (
-                    (self.entry_price * self.balance_base) + (price * quantity)
-                ) / new_base
-            self.balance_base = new_base
+                pos.entry_price = ((pos.entry_price * pos.quantity) + (price * quantity)) / new_qty
+            pos.quantity = new_qty
         else:
-            if self.entry_price is not None:
-                pnl_delta = (price - self.entry_price) * quantity
-            self.balance_base = max(0.0, self.balance_base - quantity)
+            if pos.entry_price is not None:
+                pnl_delta = (price - pos.entry_price) * quantity
+            pos.quantity = max(0.0, pos.quantity - quantity)
             self.realized_pnl += pnl_delta
-            if self.balance_base <= 1e-9:
-                self.balance_base = 0.0
-                self.entry_price = None
+            if pos.quantity <= 1e-9:
+                pos.quantity = 0.0
+                pos.entry_price = None
         return pnl_delta
 
-    def unrealized_pnl(self, mark_price: float) -> float:
-        if self.balance_base <= 0 or self.entry_price is None:
+    def unrealized_pnl(self, symbol: str, mark_price: float) -> float:
+        pos = self.positions.get(symbol)
+        if not pos or pos.quantity <= 0 or pos.entry_price is None:
             return 0.0
-        return (mark_price - self.entry_price) * self.balance_base
+        return (mark_price - pos.entry_price) * pos.quantity
 
 
 class BotEngine:
@@ -59,6 +65,7 @@ class BotEngine:
         self.id = bot_id
         self.config = config
         self.on_event = on_event
+        self.symbols = config.normalized_symbols
 
         self.exchange = ExchangeClient(config.mode)
         self.strategy = MaCrossoverRsiStrategy(
@@ -79,13 +86,13 @@ class BotEngine:
             self.live_ledger = LiveLedger()
             self._quote_balance_cache = config.starting_balance
 
-        self.candles: pd.DataFrame = pd.DataFrame(columns=["time", "open", "high", "low", "close", "volume"])
+        self.candles: dict[str, pd.DataFrame] = {s: pd.DataFrame(columns=["time", "open", "high", "low", "close", "volume"]) for s in self.symbols}
+        self.last_price: dict[str, float] = {}
         self.trades: list[Trade] = []
         self.status: str = "starting"
         self.last_error: Optional[str] = None
         self.daily_pnl = 0.0
         self._daily_pnl_day = datetime.now(timezone.utc).date()
-        self._last_price: Optional[float] = None
 
         self._task: Optional[asyncio.Task] = None
         self._stop_event = asyncio.Event()
@@ -111,7 +118,7 @@ class BotEngine:
         try:
             await self.exchange.load_markets()
             if self.live_ledger is not None:
-                quote_ccy = self.config.symbol.split("/")[-1]
+                quote_ccy = self.symbols[0].split("/")[-1]
                 self._quote_balance_cache = await self.exchange.fetch_free_balance(quote_ccy)
         except Exception as exc:  # noqa: BLE001
             self._fail(f"failed to initialize exchange connection: {exc}")
@@ -119,7 +126,8 @@ class BotEngine:
 
         self.status = "running"
         self._emit_status()
-        self._emit_log(f"bot started in {self.config.mode.value} mode for {self.config.symbol}")
+        watch_desc = self.symbols[0] if len(self.symbols) == 1 else f"{len(self.symbols)} symbols ({', '.join(self.symbols)})"
+        self._emit_log(f"bot started in {self.config.mode.value} mode, watching {watch_desc}")
 
         while not self._stop_event.is_set():
             try:
@@ -140,58 +148,86 @@ class BotEngine:
     # ---- core tick -------------------------------------------------------
 
     async def _tick(self):
-        fresh = await self.exchange.fetch_ohlcv(self.config.symbol, self.config.timeframe, limit=max(self.config.slow_period * 3, 100))
-        df = pd.DataFrame([c.model_dump() for c in fresh])
-        self.candles = df
-        self._last_price = float(df["close"].iloc[-1])
+        results = await asyncio.gather(
+            *(self.exchange.fetch_ohlcv(s, self.config.timeframe, limit=max(self.config.slow_period * 3, 100)) for s in self.symbols)
+        )
+        for symbol, fresh in zip(self.symbols, results):
+            self.candles[symbol] = pd.DataFrame([c.model_dump() for c in fresh])
+            self.last_price[symbol] = float(fresh[-1].close)
+            for c in fresh[-2:]:
+                self._emit_event("candle", {"symbol": symbol, **c.model_dump()})
+
         self._roll_daily_pnl_if_new_day()
 
-        for c in fresh[-2:]:
-            self._emit_event("candle", c.model_dump())
-
-        in_position = self._position_qty() > 0
-        exited = await self._check_risk_exits(in_position)
-        if self.status != "running" or exited:
+        if self._check_kill_switch():
             return
 
-        output = self.strategy.evaluate(self.candles, in_position=self._position_qty() > 0)
-        if output.signal == "hold":
+        exited_this_tick: set[str] = set()
+        for symbol in list(self._open_symbols()):
+            if await self._check_risk_exit(symbol):
+                exited_this_tick.add(symbol)
+                continue
+            output = self.strategy.evaluate(self.candles[symbol], in_position=True)
+            if output.signal == "sell":
+                await self._exit(symbol, output.reason)
+                exited_this_tick.add(symbol)
+
+        open_count = len(self._open_symbols())
+        slots_available = self.config.max_concurrent_positions - open_count
+        if slots_available <= 0:
             return
 
-        if output.signal == "buy":
-            await self._enter(output.reason)
-        elif output.signal == "sell":
-            await self._exit(output.reason)
+        candidates = []
+        for symbol in self.symbols:
+            if symbol in self._open_symbols() or symbol in exited_this_tick:
+                continue
+            output = self.strategy.evaluate(self.candles[symbol], in_position=False)
+            if output.signal == "buy":
+                candidates.append((symbol, output))
 
-    async def _check_risk_exits(self, in_position: bool) -> bool:
-        exited = False
-        if in_position and self._last_price is not None:
-            entry = self._entry_price()
-            if entry is not None:
-                change_pct = (self._last_price - entry) / entry * 100
-                if change_pct <= -self.config.stop_loss_pct:
-                    await self._exit(f"stop-loss hit ({change_pct:.2f}%)")
-                    exited = True
-                elif change_pct >= self.config.take_profit_pct:
-                    await self._exit(f"take-profit hit ({change_pct:.2f}%)")
-                    exited = True
+        # Strongest signal first: lower RSI = more oversold = higher-conviction entry.
+        candidates.sort(key=lambda item: item[1].rsi_value if item[1].rsi_value is not None else 100.0)
 
+        for symbol, output in candidates[:slots_available]:
+            await self._enter(symbol, output.reason)
+
+    async def _check_risk_exit(self, symbol: str) -> bool:
+        price = self.last_price.get(symbol)
+        entry = self._entry_price(symbol)
+        if price is None or entry is None:
+            return False
+        change_pct = (price - entry) / entry * 100
+        if change_pct <= -self.config.stop_loss_pct:
+            await self._exit(symbol, f"stop-loss hit ({change_pct:.2f}%)")
+            return True
+        if change_pct >= self.config.take_profit_pct:
+            await self._exit(symbol, f"take-profit hit ({change_pct:.2f}%)")
+            return True
+        return False
+
+    def _check_kill_switch(self) -> bool:
         if self.daily_pnl <= -abs(self.config.max_daily_loss_pct) / 100 * self._reference_balance():
             self.status = "stopped_kill_switch"
             self._emit_log(f"KILL SWITCH: daily loss limit reached ({self.daily_pnl:.2f}); bot stopped")
             self._emit_status()
             self._stop_event.set()
-        return exited
+            return True
+        return False
 
-    def _position_qty(self) -> float:
+    def _open_symbols(self) -> list[str]:
         if self.paper_broker:
-            return self.paper_broker.balance_base
-        return self.live_ledger.balance_base if self.live_ledger else 0.0
+            return self.paper_broker.open_symbols()
+        return self.live_ledger.open_symbols() if self.live_ledger else []
 
-    def _entry_price(self) -> Optional[float]:
+    def _position_qty(self, symbol: str) -> float:
         if self.paper_broker:
-            return self.paper_broker.entry_price
-        return self.live_ledger.entry_price if self.live_ledger else None
+            return self.paper_broker.position(symbol).quantity
+        return self.live_ledger.position(symbol).quantity if self.live_ledger else 0.0
+
+    def _entry_price(self, symbol: str) -> Optional[float]:
+        if self.paper_broker:
+            return self.paper_broker.position(symbol).entry_price
+        return self.live_ledger.position(symbol).entry_price if self.live_ledger else None
 
     def _reference_balance(self) -> float:
         if self.paper_broker:
@@ -206,8 +242,8 @@ class BotEngine:
 
     # ---- order execution -------------------------------------------------
 
-    async def _enter(self, reason: str):
-        price = self._last_price
+    async def _enter(self, symbol: str, reason: str):
+        price = self.last_price.get(symbol)
         if price is None:
             return
         if self.paper_broker:
@@ -215,43 +251,43 @@ class BotEngine:
             qty = budget / price
             if qty <= 0:
                 return
-            self.paper_broker.execute(OrderSide.buy, price, qty)
+            self.paper_broker.execute(symbol, OrderSide.buy, price, qty)
         else:
             budget = self._quote_balance_cache * (self.config.position_size_pct / 100)
             qty = budget / price
             if qty <= 0:
                 return
-            order = await self.exchange.create_market_order(self.config.symbol, OrderSide.buy, qty)
+            order = await self.exchange.create_market_order(symbol, OrderSide.buy, qty)
             fill_price = float(order.get("average") or order.get("price") or price)
             fill_qty = float(order.get("filled") or qty)
-            self.live_ledger.on_fill(OrderSide.buy, fill_price, fill_qty)
+            self.live_ledger.on_fill(symbol, OrderSide.buy, fill_price, fill_qty)
             price, qty = fill_price, fill_qty
 
-        trade = Trade(time=int(time.time()), side=OrderSide.buy, price=price, quantity=qty, reason=reason)
+        trade = Trade(time=int(time.time()), symbol=symbol, side=OrderSide.buy, price=price, quantity=qty, reason=reason)
         self.trades.append(trade)
         self._emit_event("trade", trade.model_dump())
-        self._emit_log(f"BUY {qty:.6f} {self.config.symbol} @ {price:.2f} — {reason}")
+        self._emit_log(f"BUY {qty:.6f} {symbol} @ {price:.2f} — {reason}")
         self._emit_status()
 
-    async def _exit(self, reason: str):
-        price = self._last_price
-        qty = self._position_qty()
+    async def _exit(self, symbol: str, reason: str):
+        price = self.last_price.get(symbol)
+        qty = self._position_qty(symbol)
         if price is None or qty <= 0:
             return
         if self.paper_broker:
-            pnl_delta = self.paper_broker.execute(OrderSide.sell, price, qty)
+            pnl_delta = self.paper_broker.execute(symbol, OrderSide.sell, price, qty)
         else:
-            order = await self.exchange.create_market_order(self.config.symbol, OrderSide.sell, qty)
+            order = await self.exchange.create_market_order(symbol, OrderSide.sell, qty)
             fill_price = float(order.get("average") or order.get("price") or price)
             fill_qty = float(order.get("filled") or qty)
-            pnl_delta = self.live_ledger.on_fill(OrderSide.sell, fill_price, fill_qty)
+            pnl_delta = self.live_ledger.on_fill(symbol, OrderSide.sell, fill_price, fill_qty)
             price, qty = fill_price, fill_qty
 
         self.daily_pnl += pnl_delta
-        trade = Trade(time=int(time.time()), side=OrderSide.sell, price=price, quantity=qty, reason=reason, pnl=pnl_delta)
+        trade = Trade(time=int(time.time()), symbol=symbol, side=OrderSide.sell, price=price, quantity=qty, reason=reason, pnl=pnl_delta)
         self.trades.append(trade)
         self._emit_event("trade", trade.model_dump())
-        self._emit_log(f"SELL {qty:.6f} {self.config.symbol} @ {price:.2f} — {reason} (PnL {pnl_delta:+.2f})")
+        self._emit_log(f"SELL {qty:.6f} {symbol} @ {price:.2f} — {reason} (PnL {pnl_delta:+.2f})")
         self._emit_status()
 
     # ---- status / events --------------------------------------------------
@@ -263,18 +299,25 @@ class BotEngine:
         self._emit_status()
 
     def to_status(self) -> BotStatus:
-        price = self._last_price or 0.0
+        positions = []
+        for symbol in self._open_symbols():
+            qty = self._position_qty(symbol)
+            entry = self._entry_price(symbol)
+            price = self.last_price.get(symbol, entry or 0.0)
+            if entry is None:
+                continue
+            unrealized = (
+                self.paper_broker.unrealized_pnl(symbol, price)
+                if self.paper_broker
+                else self.live_ledger.unrealized_pnl(symbol, price)
+            )
+            positions.append(Position(symbol=symbol, quantity=qty, entry_price=entry, unrealized_pnl=unrealized))
+
         if self.paper_broker:
             balance_quote = self.paper_broker.balance_quote
-            balance_base = self.paper_broker.balance_base
-            entry_price = self.paper_broker.entry_price
-            unrealized = self.paper_broker.unrealized_pnl(price)
             realized = self.paper_broker.realized_pnl
         else:
             balance_quote = self._quote_balance_cache
-            balance_base = self.live_ledger.balance_base
-            entry_price = self.live_ledger.entry_price
-            unrealized = self.live_ledger.unrealized_pnl(price)
             realized = self.live_ledger.realized_pnl
 
         return BotStatus(
@@ -282,10 +325,7 @@ class BotEngine:
             config=self.config,
             status=self.status,
             balance_quote=balance_quote,
-            balance_base=balance_base,
-            position_qty=balance_base,
-            entry_price=entry_price,
-            unrealized_pnl=unrealized,
+            positions=positions,
             realized_pnl=realized,
             daily_pnl=self.daily_pnl,
             trades=self.trades[-100:],

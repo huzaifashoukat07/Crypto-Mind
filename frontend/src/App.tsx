@@ -16,6 +16,7 @@ interface LogLine {
 
 export default function App() {
   const [config, setConfig] = useState<BotConfig>(DEFAULT_CONFIG);
+  const [chartSymbol, setChartSymbol] = useState(config.symbols[0]);
   const [candles, setCandles] = useState<Candle[]>([]);
   const [status, setStatus] = useState<BotStatus | null>(null);
   const [logLines, setLogLines] = useState<LogLine[]>([]);
@@ -23,12 +24,25 @@ export default function App() {
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
   const botIdRef = useRef<string | null>(null);
 
-  // Load a chart preview whenever the symbol/timeframe changes and no bot is running yet.
+  const isRunning = status?.status === "running" || status?.status === "starting";
+  // While a bot is running, chart symbol choices come from its own config
+  // (locked in at start); otherwise they follow whatever is being edited.
+  const watchlist = isRunning ? status!.config.symbols : config.symbols;
+
   useEffect(() => {
-    if (status && (status.status === "running" || status.status === "starting")) return;
+    if (!watchlist.includes(chartSymbol)) {
+      setChartSymbol(watchlist[0]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watchlist.join(",")]);
+
+  // Load a chart preview for the currently viewed symbol whenever it (or the
+  // timeframe) changes and no bot is running yet to stream live candles instead.
+  useEffect(() => {
+    if (isRunning) return;
     let cancelled = false;
     api
-      .candles(config.symbol, config.timeframe)
+      .candles(chartSymbol, config.timeframe)
       .then((data) => {
         if (!cancelled) setCandles(data);
       })
@@ -39,30 +53,34 @@ export default function App() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [config.symbol, config.timeframe]);
+  }, [chartSymbol, config.timeframe, isRunning]);
 
-  const handleEvent = useCallback((event: WsEvent) => {
-    if (botIdRef.current && event.bot_id !== botIdRef.current) return;
+  const handleEvent = useCallback(
+    (event: WsEvent) => {
+      if (botIdRef.current && event.bot_id !== botIdRef.current) return;
 
-    if (event.type === "candle") {
-      const candle = event.data as unknown as Candle;
-      setCandles((prev) => {
-        const idx = prev.findIndex((c) => c.time === candle.time);
-        if (idx === -1) return [...prev, candle];
-        const next = prev.slice();
-        next[idx] = candle;
-        return next;
-      });
-    } else if (event.type === "status") {
-      setStatus(event.data as unknown as BotStatus);
-    } else if (event.type === "log") {
-      const data = event.data as unknown as LogLine;
-      setLogLines((prev) => [...prev, data]);
-    } else if (event.type === "error") {
-      const data = event.data as unknown as { message: string };
-      setErrorBanner(data.message);
-    }
-  }, []);
+      if (event.type === "candle") {
+        const { symbol, ...candle } = event.data as unknown as Candle & { symbol: string };
+        if (symbol !== chartSymbol) return;
+        setCandles((prev) => {
+          const idx = prev.findIndex((c) => c.time === candle.time);
+          if (idx === -1) return [...prev, candle];
+          const next = prev.slice();
+          next[idx] = candle;
+          return next;
+        });
+      } else if (event.type === "status") {
+        setStatus(event.data as unknown as BotStatus);
+      } else if (event.type === "log") {
+        const data = event.data as unknown as LogLine;
+        setLogLines((prev) => [...prev, data]);
+      } else if (event.type === "error") {
+        const data = event.data as unknown as { message: string };
+        setErrorBanner(data.message);
+      }
+    },
+    [chartSymbol]
+  );
 
   useBotSocket(handleEvent);
 
@@ -94,6 +112,8 @@ export default function App() {
     }
   };
 
+  const chartTrades = (status?.trades ?? []).filter((t) => t.symbol === chartSymbol);
+
   return (
     <div className="app">
       <header className="app-header">
@@ -109,7 +129,17 @@ export default function App() {
 
       <main className="app-body">
         <section className="chart-section">
-          <ChartPanel candles={candles} trades={status?.trades ?? []} />
+          <div className="chart-toolbar">
+            <span>Viewing chart for</span>
+            <select value={chartSymbol} onChange={(e) => setChartSymbol(e.target.value)}>
+              {watchlist.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+          </div>
+          <ChartPanel candles={candles} trades={chartTrades} />
         </section>
         <aside className="side-panel">
           <ControlPanel

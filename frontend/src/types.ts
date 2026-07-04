@@ -2,7 +2,7 @@ export type TradingMode = "paper" | "testnet" | "live";
 export type OrderSide = "buy" | "sell";
 
 export interface BotConfig {
-  symbol: string;
+  symbols: string[];
   timeframe: string;
   mode: TradingMode;
   fast_period: number;
@@ -15,6 +15,7 @@ export interface BotConfig {
   stop_loss_pct: number;
   take_profit_pct: number;
   max_daily_loss_pct: number;
+  max_concurrent_positions: number;
   poll_interval_sec: number;
   live_confirmation?: "I_UNDERSTAND_THE_RISK" | null;
 }
@@ -30,11 +31,19 @@ export interface Candle {
 
 export interface Trade {
   time: number;
+  symbol: string;
   side: OrderSide;
   price: number;
   quantity: number;
   reason: string;
   pnl?: number | null;
+}
+
+export interface Position {
+  symbol: string;
+  quantity: number;
+  entry_price: number;
+  unrealized_pnl: number;
 }
 
 export type BotRunStatus =
@@ -49,10 +58,7 @@ export interface BotStatus {
   config: BotConfig;
   status: BotRunStatus;
   balance_quote: number;
-  balance_base: number;
-  position_qty: number;
-  entry_price: number | null;
-  unrealized_pnl: number;
+  positions: Position[];
   realized_pnl: number;
   daily_pnl: number;
   trades: Trade[];
@@ -66,7 +72,7 @@ export interface WsEvent {
 }
 
 export const DEFAULT_CONFIG: BotConfig = {
-  symbol: "BTC/USDT",
+  symbols: ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT"],
   timeframe: "5m",
   mode: "paper",
   fast_period: 9,
@@ -79,6 +85,7 @@ export const DEFAULT_CONFIG: BotConfig = {
   stop_loss_pct: 2,
   take_profit_pct: 4,
   max_daily_loss_pct: 5,
+  max_concurrent_positions: 3,
   poll_interval_sec: 5,
   live_confirmation: null,
 };

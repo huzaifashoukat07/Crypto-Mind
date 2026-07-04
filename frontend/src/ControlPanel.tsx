@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { BotConfig, BotRunStatus, TradingMode } from "./types";
 
 interface Props {
@@ -39,11 +39,50 @@ function NumberField({
   );
 }
 
+function SymbolsField({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: string[];
+  onChange: (v: string[]) => void;
+  disabled: boolean;
+}) {
+  const [raw, setRaw] = useState(value.join(", "));
+
+  useEffect(() => {
+    setRaw(value.join(", "));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value.join(",")]);
+
+  const commit = (text: string) => {
+    const parsed = text
+      .split(",")
+      .map((s) => s.trim().toUpperCase())
+      .filter(Boolean);
+    if (parsed.length > 0) onChange(parsed);
+  };
+
+  return (
+    <label className="field" style={{ flex: 2, minWidth: 200 }}>
+      <span>Watchlist (comma-separated)</span>
+      <input
+        value={raw}
+        disabled={disabled}
+        placeholder="BTC/USDT, ETH/USDT, SOL/USDT"
+        onChange={(e) => setRaw(e.target.value)}
+        onBlur={(e) => commit(e.target.value)}
+      />
+    </label>
+  );
+}
+
 export function ControlPanel({ config, onChange, onStart, onStop, status, busy }: Props) {
   const [showLiveConfirm, setShowLiveConfirm] = useState(false);
   const isRunning = status === "running" || status === "starting";
   const set = <K extends keyof BotConfig>(key: K, value: BotConfig[K]) =>
     onChange({ ...config, [key]: value });
+  const isScannerMode = config.symbols.length > 1;
 
   const handleStartClick = () => {
     if (config.mode === "live" && config.live_confirmation !== "I_UNDERSTAND_THE_RISK") {
@@ -56,15 +95,7 @@ export function ControlPanel({ config, onChange, onStart, onStop, status, busy }
   return (
     <div className="control-panel">
       <div className="field-row">
-        <label className="field">
-          <span>Symbol</span>
-          <input
-            value={config.symbol}
-            disabled={isRunning}
-            onChange={(e) => set("symbol", e.target.value.toUpperCase())}
-            placeholder="BTC/USDT"
-          />
-        </label>
+        <SymbolsField value={config.symbols} onChange={(v) => set("symbols", v)} disabled={isRunning} />
         <label className="field">
           <span>Timeframe</span>
           <select
@@ -95,6 +126,14 @@ export function ControlPanel({ config, onChange, onStart, onStop, status, busy }
           </select>
         </label>
       </div>
+      {isScannerMode && (
+        <p className="hint-text">
+          Scanner mode: watching {config.symbols.length} symbols. Each tick, the bot evaluates
+          all of them and automatically enters whichever show the strongest buy signal (most
+          oversold RSI first), up to {config.max_concurrent_positions} open position
+          {config.max_concurrent_positions === 1 ? "" : "s"} at a time.
+        </p>
+      )}
 
       <fieldset className="field-group" disabled={isRunning}>
         <legend>Strategy — MA crossover filtered by RSI</legend>
@@ -115,6 +154,7 @@ export function ControlPanel({ config, onChange, onStart, onStop, status, busy }
         <div className="field-row">
           <NumberField label="Starting balance (paper)" value={config.starting_balance} onChange={(v) => set("starting_balance", v)} disabled={isRunning} />
           <NumberField label="Position size %" value={config.position_size_pct} onChange={(v) => set("position_size_pct", v)} disabled={isRunning} />
+          <NumberField label="Max concurrent positions" value={config.max_concurrent_positions} onChange={(v) => set("max_concurrent_positions", v)} disabled={isRunning} />
         </div>
         <div className="field-row">
           <NumberField label="Stop loss %" value={config.stop_loss_pct} step={0.1} onChange={(v) => set("stop_loss_pct", v)} disabled={isRunning} />
